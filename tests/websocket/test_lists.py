@@ -131,5 +131,97 @@ async def test_lists_repository_membership(
 
     list_response = await ws_client.send_and_receive_json("hacs/lists/list", {})
     assert list_response["success"] is True
-    selected = next(item for item in list_response["result"] if item["id"] == components["id"])
+    selected = next(
+        item for item in list_response["result"] if item["id"] == components["id"]
+    )
     assert selected["repositories"] == [expected_repository]
+
+
+async def test_lists_validation(
+    hass: HomeAssistant,
+    setup_integration: Generator,
+    ws_client: WSClient,
+) -> None:
+    """Test invalid list operations are rejected."""
+    hacs = get_hacs(hass)
+    repository = hacs.repositories.get_by_full_name("hacs-test-org/integration-basic")
+    assert repository is not None
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/create",
+        {"name": "Components"},
+    )
+    assert response["success"] is True
+    components = next(
+        item for item in response["result"] if item["name"] == "Components"
+    )
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/create",
+        {"name": "components"},
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "list_exists"
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/create",
+        {"name": "Favourite"},
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "list_exists"
+
+    rename_response = await ws_client.send_and_receive_json(
+        "hacs/lists/rename",
+        {"list_id": components["id"], "name": "Favourite"},
+    )
+    assert rename_response["success"] is False
+    assert rename_response["error"]["code"] == "list_exists"
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/rename",
+        {"list_id": "favourite", "name": "Pinned"},
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "builtin_list"
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/delete",
+        {"list_id": "favourite"},
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "builtin_list"
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/rename",
+        {"list_id": "missing", "name": "Renamed"},
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "list_not_found"
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/delete",
+        {"list_id": "missing"},
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "list_not_found"
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/set_repository",
+        {
+            "repository": "missing",
+            "lists": [components["id"]],
+        },
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "repository_not_found"
+
+    response = await ws_client.send_and_receive_json(
+        "hacs/lists/set_repository",
+        {
+            "repository": str(repository.data.id),
+            "lists": ["missing"],
+        },
+    )
+    assert response["success"] is False
+    assert response["error"]["code"] == "list_not_found"
+
